@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+
+# ============================================================
+# Tool Name : dns-subenum
+# Purpose   : DNS Subdomain Enumeration Tool
+# Author    : Muhamed Adhil K A
+# ============================================================
+
+set -euo pipefail
+
+DEFAULT_FILENAME="subdomains.txt"
+SYSTEM_WORDLIST="/usr/share/wordlists/subdomains.txt"
+THREADS=50
+OUTPUT_FILE=""
+
+# Colors
+RED="\e[31m"
+GREEN="\e[32m"
+CYAN="\e[36m"
+YELLOW="\e[33m"
+RESET="\e[0m"
+BOLD="\e[1m"
+
+usage() {
+    echo -e "${CYAN}Usage:${RESET} dns-subenum -d <domain> [-w <wordlist>] [-t <threads>] [-o <output_file>]"
+    echo
+    echo -e "${YELLOW}Options:${RESET}"
+    echo "  -d    Target domain (required)"
+    echo "  -w    Subdomain wordlist (optional)"
+    echo "  -t    Number of parallel threads (optional, default: 50)"
+    echo "  -o    Output file to save valid subdomains (optional)"
+    exit 1
+}
+
+DOMAIN=""
+WORDLIST=""
+
+# Resolve script directory (works even when installed in /bin)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+while getopts ":d:w:t:o:h" opt; do
+    case "$opt" in
+        d) DOMAIN="$OPTARG" ;;
+        w) WORDLIST="$OPTARG" ;;
+        t) THREADS="$OPTARG" ;;
+        o) OUTPUT_FILE="$OPTARG" ;;
+        h) usage ;;
+        *) usage ;;
+    esac
+done
+
+if [[ -z "$DOMAIN" ]]; then
+    echo -e "${RED}[-] Error:${RESET} Domain (-d) is required."
+    usage
+fi
+
+if [[ ! "$THREADS" =~ ^[0-9]+$ ]] || [[ "$THREADS" -lt 1 ]]; then
+    echo -e "${RED}[-] Error:${RESET} Threads (-t) must be a positive integer."
+    exit 1
+fi
+
+# Wordlist resolution logic
+if [[ -n "$WORDLIST" ]]; then
+    if [[ ! -f "$WORDLIST" ]]; then
+        echo -e "${RED}[-] Error:${RESET} Provided wordlist not found: $WORDLIST"
+        exit 1
+    fi
+else
+    if [[ -f "$SCRIPT_DIR/$DEFAULT_FILENAME" ]]; then
+        WORDLIST="$SCRIPT_DIR/$DEFAULT_FILENAME"
+    elif [[ -f "$SYSTEM_WORDLIST" ]]; then
+        WORDLIST="$SYSTEM_WORDLIST"
+    else
+        echo -e "${RED}[-] Error:${RESET} Default subdomains.txt not found."
+        echo -e "${YELLOW}[!] Please provide a wordlist manually using -w <wordlist>.${RESET}"
+        exit 1
+    fi
+fi
+
+if ! command -v host &>/dev/null; then
+    echo -e "${RED}[-] Error:${RESET} 'host' command not found. Install dnsutils / bind-tools."
+    exit 1
+fi
+
+[[ -n "$OUTPUT_FILE" ]] && : > "$OUTPUT_FILE"
+
+echo -e "${BOLD}${CYAN}==============================================${RESET}"
+echo -e "${BOLD}${GREEN}        DNS Subdomain Enumeration Tool         ${RESET}"
+echo -e "${BOLD}${CYAN}==============================================${RESET}"
+echo -e "${CYAN}[+] Target Domain :${RESET} $DOMAIN"
+echo -e "${CYAN}[+] Wordlist      :${RESET} $WORDLIST"
+echo -e "${CYAN}[+] Threads       :${RESET} $THREADS"
+[[ -n "$OUTPUT_FILE" ]] && echo -e "${CYAN}[+] Output File   :${RESET} $OUTPUT_FILE"
+echo
+echo -e "${YELLOW}[+] Enumerating subdomains...${RESET}"
+echo
+
+export DOMAIN GREEN RESET OUTPUT_FILE
+
+resolve() {
+    sub="$1"
+    fqdn="${sub}.${DOMAIN}"
+    result=$(host "$fqdn" 2>/dev/null || true)
+
+    if ! echo "$result" | grep -qi "NXDOMAIN"; then
+        echo -e "${GREEN}[FOUND]${RESET} $fqdn"
+        [[ -n "$OUTPUT_FILE" ]] && echo "$fqdn" >> "$OUTPUT_FILE"
+    fi
+}
+
+export -f resolve
+
+xargs -P "$THREADS" -I {} bash -c 'resolve "$@"' _ {} < "$WORDLIST"
+
+echo
+echo -e "${GREEN}[+] Enumeration completed.${RESET}"
+[[ -n "$OUTPUT_FILE" ]] && echo -e "${CYAN}[+] Results saved to:${RESET} $OUTPUT_FILE"
